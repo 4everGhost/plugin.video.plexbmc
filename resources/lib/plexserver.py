@@ -12,35 +12,26 @@ import requests
 
 printDebug=printDebug("PleXBMC", "plexserver")
 
-DEFAULT_PORT="32400"
-
 printDebug.debug("Using Requests version for HTTP: %s" % requests.__version__)
 
 class PlexMediaServer:
 
-    def __init__(self, uuid=None, name=None, address=None, port=32400, token=None, discovery=None, class_type='primary' ):
+    def __init__(self, uuid=None, name=None, uri=None, token=None, discovery=None, class_type='primary' ):
 
         self.__revision = REQUIRED_REVISION
-        self.protocol="http"
         self.uuid=uuid
         self.server_name=name
         self.discovery=discovery
-        self.local_address=[]
-        self.local_port=None
-        self.external_address=None
-        self.external_port=None
-        self.access_address=None
-        self.access_port=None
+        self.local_uri=[]
+        self.external_uri=None
+        self.access_uri=None
 
         if self.discovery == "myplex":
-            self.external_address=address
-            self.external_port=port
+            self.external_uri=uri
         elif self.discovery == "discovery":
-            self.local_address=[address]
-            self.local_port=port
+            self.local_uri=uri
         
-        self.access_address=address
-        self.access_port=port
+        self.access_uri=uri
 
         self.section_list=[]
         self.token=token
@@ -68,8 +59,7 @@ class PlexMediaServer:
     def get_details(self):
 
         return {'serverName': self.server_name,
-                'server'    : self.get_address(),
-                'port'      : self.get_port(),
+                'uri   '    : self.get_uri(),
                 'discovery' : self.discovery,
                 'token'     : self.token ,
                 'uuid'      : self.uuid,
@@ -127,17 +117,14 @@ class PlexMediaServer:
     def get_name(self):
         return self.server_name
 
-    def get_address(self):
-        return self.access_address
-
-    def get_port(self):
-        return self.access_port
+    def get_uri(self):
+        return self.access_uri
 
     def get_url_location(self):
-        return '%s://%s:%s' % ( self.protocol, self.get_address(), self.get_port())
+        return self.access_uri
 
     def get_location(self):
-        return '%s:%s' % ( self.get_address(), self.get_port())
+        return urlparse.urlparse(self.access_uri).netloc
 
     def get_token(self):
         return self.token
@@ -145,47 +132,19 @@ class PlexMediaServer:
     def get_discovery(self):
         return self.discovery
 
-    def add_local_address(self, address):
-        self.local_address=address.split(',')
+    def set_local_uri(self, uris):
+        self.local_uri=uris
 
-    def set_best_address(self, ipaddress):
-        if self.external_address == ipaddress:
-            printDebug.debug("new [%s] == existing [%s]" % (ipaddress, self.external_address))
-            self.access_address=self.external_address
-            self.access_port=self.external_port
-            return
-        else:
-            printDebug("new [%s] != existing [%s]" % (ipaddress, self.external_address))
+    def set_best_uri(self, uri):
+        self.access_uri = uri
 
-        for test_address in self.local_address:
-            if test_address == ipaddress:
-                printDebug.debug("new [%s] == existing [%s]" % (ipaddress, test_address))
-                self.access_address = test_address
-                self.access_port=32400
-                return
-            else:
-                printDebug.debug("new [%s] != existing [%s]" % (ipaddress, test_address))
+    def is_encrypted(self):
+        if self.external_uri.startswith('https'):
+            return true
 
-        printDebug.debug("new [%s] is unknown.  Possible uuid clash?" % ipaddress)
-        printDebug.debug("Will use this address for this object, as a last resort")
-        self.access_address = ipaddress
-        self.access_port = 32400
-        
-        return
-
-    def find_address_match(self, ipaddress,port):
-        printDebug.debug("Checking [%s:%s] against [%s:%s]" % ( ipaddress, port, self.access_address, self.access_port))
-        if "%s:%s" % (ipaddress, port) == "%s:%s" % (self.access_address, self.access_port):
+    def find_uri_match(self, uri):
+        if uri == self.external_uri or uri in self.local_uri:
             return True
-
-        printDebug.debug("Checking [%s:%s] against [%s:%s]" % ( ipaddress, port, self.external_address, self.external_port))
-        if "%s:%s" % (ipaddress, port) == "%s:%s" %(self.external_address, self.external_port):
-            return True
-
-        for test_address in self.local_address:
-            printDebug.debug("Checking [%s:%s] against [%s:%s]" % ( ipaddress, port, ipaddress, 32400 ))
-            if "%s:%s" % (ipaddress, port) == "%s:%s" % (test_address, 32400):
-                return True
 
         return False
 
@@ -232,17 +191,17 @@ class PlexMediaServer:
             start_time=time.time()
             try:
                 if type == 'get':
-                    response = requests.get("%s://%s:%s%s" % (self.protocol, self.get_address(), self.get_port(), url), params=self.plex_identification_header, timeout=(2,60))
+                    response = requests.get("%s%s" % (self.get_uri(), url), params=self.plex_identification_header, timeout=(2,60))
                 elif type == 'put':
-                    response = requests.put("%s://%s:%s%s" % (self.protocol, self.get_address(), self.get_port(), url), params=self.plex_identification_header, timeout=(2,60))                
+                    response = requests.put("%s%s" % (self.get_uri(), url), params=self.plex_identification_header, timeout=(2,60))                
                 elif type == 'delete':
-                    response = requests.delete("%s://%s:%s%s" % (self.protocol, self.get_address(), self.get_port(), url), params=self.plex_identification_header, timeout=(2,60))              
+                    response = requests.delete("%s%s" % (self.get_uri(), url), params=self.plex_identification_header, timeout=(2,60))              
                 self.offline=False
             except requests.exceptions.ConnectionError, e:
-                printDebug.error("Server: %s is offline or uncontactable. error: %s" % (self.get_address(), e))
+                printDebug.error("Server: %s is offline or uncontactable. error: %s" % (self.get_uri(), e))
                 self.offline=True
             except requests.exceptions.ReadTimeout, e:
-                printDebug.info("Server: read timeout for %s on %s " % (self.get_address(), url))
+                printDebug.info("Server: read timeout for %s on %s " % (self.get_uri(), url))
             else:
 
                 printDebug.debug("URL was: %s" % response.url)
@@ -252,7 +211,7 @@ class PlexMediaServer:
                     printDebug.debugplus("===XML===\n%s\n===XML===" % response.text.encode('utf-8'))
                     data = response.text.encode('utf-8')
 
-                    printDebug.info("DOWNLOAD: It took %.2f seconds to retrieve data from %s" % ((time.time() - start_time), self.get_address()))                   
+                    printDebug.info("DOWNLOAD: It took %.2f seconds to retrieve data from %s" % ((time.time() - start_time), self.get_uri()))                   
                     return data
                 elif response.status_code == requests.codes.unauthorized:
                     printDebug.debug("Response: 401 Unauthorized - Please log into myplex or check your myplex password")                                        
@@ -341,7 +300,7 @@ class PlexMediaServer:
         data = self.talk(url)
         start_time=time.time()
         tree = etree.fromstring(data)
-        printDebug.info("PARSE: it took %.2f seconds to parse data from %s" % ((time.time() - start_time), self.get_address()))
+        printDebug.info("PARSE: it took %.2f seconds to parse data from %s" % ((time.time() - start_time), self.get_uri()))
         return tree
 
     def raw_xml(self,url):
@@ -357,7 +316,7 @@ class PlexMediaServer:
 
         data = self.talk(url)
 
-        printDebug.info("PROCESSING: it took %.2f seconds to process data from %s" % ((time.time() - start_time), self.get_address()))
+        printDebug.info("PROCESSING: it took %.2f seconds to process data from %s" % ((time.time() - start_time), self.get_uri()))
         return data
 
     def is_owned(self):

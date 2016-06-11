@@ -261,15 +261,6 @@ class Plex:
 
         return self.client_id
 
-    def talk_direct_to_server(self, ip="localhost", port=DEFAULT_PORT, url=None):
-        response = requests.get("http://%s:%s%s" % (ip, port, url), params=self.plex_identification(), timeout=2)
-
-        printDebug.debug("URL was: %s" % response.url)
-
-        if response.status_code == requests.codes.ok:
-            printDebug.debugplus("===XML===\n%s\n===XML===" % response.text)
-            return response.text
-
     def get_processed_myplex_xml(self, url):
         data = self.talk_to_myplex (url)
         return etree.fromstring(data)
@@ -302,7 +293,7 @@ class Plex:
                     printDebug.info("GDM discovery completed")
 
                     for device in gdm_server_name:
-                        new_server=PlexMediaServer(name=device['serverName'],address=device['server'], port=device['port'], discovery='discovery', uuid=device['uuid'])
+                        new_server=PlexMediaServer(name=device['serverName'],uri="http://"+device['server']+":"+device['port'], discovery='discovery', uuid=device['uuid'])
                         new_server.set_user(self.effective_user)
                         new_server.set_token(self.effective_token)
 
@@ -319,7 +310,7 @@ class Plex:
 
                 printDebug.info( "PleXBMC -> Settings hostname and port: %s : %s" % ( settings.get_setting('ipaddress'), settings.get_setting('port')))
 
-                local_server=PlexMediaServer(address=settings.get_setting('ipaddress'), port=settings.get_setting('port'), discovery='local')
+                local_server=PlexMediaServer(uri="http://"+settings.get_setting('ipaddress')+":"+settings.get_setting('port'), discovery='local')
                 local_server.set_user(self.effective_user)
                 local_server.set_token(self.effective_token)
 
@@ -341,7 +332,7 @@ class Plex:
 
     def get_myplex_servers(self):
         tempServers = {}
-        xml = self.talk_to_myplex("/pms/servers")
+        xml = self.talk_to_myplex("/api/resources?includeHttps=1")
 
         if xml is False:
             return {}
@@ -351,18 +342,29 @@ class Plex:
         count = 0
         for server in server_list:
 
+            # we are only interested in devices that offer media
+            if server.get('provides').count('server') == 0:
+                continue
+
+            local_uris = []
+            remote_uri = None
+
+            for c in server:
+                if c.get('local') == "0":
+                    remote_uri = c.get('uri')
+                else:
+                    local_uris.append(c.get('uri'))
+
             myplex_server=PlexMediaServer( name = server.get('name').encode('utf-8'),
-                                           address = server.get('address') ,
-                                           port = server.get('port'),
+                                           uri = remote_uri,
                                            discovery = "myplex" ,
                                            token = server.get('accessToken'),
-                                           uuid = server.get('machineIdentifier'))
+                                           uuid = server.get('clientIdentifier'))
 
             if server.get('owned') == "0":
                 myplex_server.set_owned(0)
 
-            if server.get('localAddresses') is not None:
-                myplex_server.add_local_address(server.get('localAddresses'))
+            myplex_server.set_local_uri(local_uris)
 
             myplex_server.set_user(self.effective_user)
 
@@ -383,9 +385,12 @@ class Plex:
                 self.server_list[server.get_uuid()]=server
         else:
             printDebug.info("Found existing server %s %s" % (existing.get_name(), existing.get_uuid()))
-            existing.set_best_address(server.get_address())
-            existing.refresh()
-            self.server_list[existing.get_uuid()]=existing
+
+            # GDM cannot (easily) handle encrypted servers. so leave them be
+            if not existing.is_encrypted:
+                existing.set_best_uri(server.get_uri())
+                existing.refresh()
+                self.server_list[existing.get_uuid()]=existing
 
         return 
 
@@ -484,38 +489,25 @@ class Plex:
 
         return token
 
-    def get_server_from_ip(self, ip):
-        printDebug.debug("IP to lookup: %s" % ip)
-
-        if ':' in ip:
-            #We probably have an IP:port being passed
-            ip, port = ip.split(':')
-
-        if not is_ip(ip):
-            printDebug.info("Not an IP Address")
-            return PlexMediaServer(name="dummy",address='127.0.0.1', port=32400, discovery='local')
-
+    def get_server_from_url(self, url):
+        url_parts = urlparse.urlparse(url)
+        base_url = url_parts.scheme+"://"+url_parts.netloc
         for server in self.server_list.values():
 
-            printDebug.debug("[%s] - checking ip:%s against server ip %s" % (server.get_name(), ip, server.get_address()))
+            printDebug.debug("[%s] - checking %s against server uri %s" % (server.get_name(), base_url, server.get_uri()))
 
-            if server.find_address_match(ip,port):
+            if server.find_uri_match(base_url):
                 return server
 
-        printDebug.info("Unable to translate - Returning new plexserver set to %s" % ip )
+        printDebug.info("Unable to translate - Returning new plexserver set to %s" % base_url )
 
-        return PlexMediaServer(name="Unknown",address=ip, port=port, discovery='local')
-
-    def get_server_from_url(self, url):
-        url_parts = urlparse.urlparse(url)    
-        return self.get_server_from_ip(url_parts.netloc)        
+        return PlexMediaServer(name="Unknown",uri=base_url, discovery='local')
 
     def get_server_from_uuid(self, uuid):
         return self.server_list[uuid]
 
     def get_processed_xml(self, url):
-        url_parts = urlparse.urlparse(url)
-        server = self.get_server_from_ip(url_parts.netloc)
+        server = self.get_server_from_url(url)
 
         if server:
             return server.processed_xml(url)
@@ -523,7 +515,7 @@ class Plex:
 
     def talk_to_server(self, url):  
         url_parts = urlparse.urlparse(url)
-        server = self.get_server_from_ip(url_parts.netloc)
+        server = self.get_server_from_url(url)
 
         if server:
             return server.raw_xml(url)

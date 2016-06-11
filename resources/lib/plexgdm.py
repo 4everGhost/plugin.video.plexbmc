@@ -211,6 +211,8 @@ class plexgdm:
                             update['uuid'] = each.split(':')[1].strip()
                         elif "Name:" in each:
                             update['serverName'] = each.split(':')[1].strip()
+                        elif "Host:" in each:
+                            update['host'] = each.split(':')[1].strip()
                         elif "Port:" in each:
                             update['port'] = each.split(':')[1].strip()
                         elif "Updated-At:" in each:
